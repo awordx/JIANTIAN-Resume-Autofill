@@ -1,0 +1,33 @@
+[package]
+name = "reminders"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77.2"
+description = "Resume Pro D10 reminder scheduling: turns a todo's due time into an absolute instant and hands it to the operating system's scheduler. Knows nothing about the database, Tauri, or what a todo means."
+publish = false
+
+[dependencies]
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "local-offset"] }
+time-tz = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Data_Xml_Dom",
+  "Foundation",
+  "Foundation_Collections",
+  "UI_Notifications",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSCalendar", "NSDate", "NSError", "NSString", "NSTimeZone"] }
+objc2-user-notifications = { version = "0.3", features = [
+  "UNNotificationContent",
+  "UNNotificationRequest",
+  "UNNotificationTrigger",
+  "UNUserNotificationCenter",
+  "block2",
+] }
+
+[dev-dependencies]

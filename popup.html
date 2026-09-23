@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume Pro</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="popup-header">
+        <div>
+          <p class="eyebrow">简填.JIANTIAN</p>
+          <h1>简历自动填写助手</h1>
+        </div>
+        <p class="header-note">Excel 维护数据，插件负责导入与填写。</p>
+        <div class="version-row">
+          <span id="current-version">当前版本</span>
+          <button id="check-update-button" class="text-button" type="button">检查更新</button>
+          <span id="update-check-status" aria-live="polite"></span>
+        </div>
+      </header>
+
+      <section id="update-banner" class="update-banner" aria-live="polite" hidden>
+        <div>
+          <strong id="update-title">发现新版本</strong>
+          <p id="update-summary"></p>
+        </div>
+        <div class="update-actions">
+          <button id="download-update-button" class="primary-button" type="button">下载更新</button>
+          <button id="dismiss-update-button" class="secondary-button" type="button">忽略此版本</button>
+        </div>
+      </section>
+
+      <nav class="tab-nav" aria-label="功能分区">
+        <button class="tab-button is-active" type="button" data-tab="templates">我的信息</button>
+        <button class="tab-button" type="button" data-tab="profile">基础信息</button>
+        <button class="tab-button" type="button" data-tab="ai">AI 配置</button>
+      </nav>
+
+      <section class="tab-panel is-active" data-panel="templates">
+        <div class="panel-card">
+          <div class="panel-toolbar">
+            <div>
+              <h2>我的信息</h2>
+              <p>按投递方向保存多份（比如「硬件方向」「软件方向」），填表前在侧边栏切换当前使用的那一份。每份自带一份基础信息（姓名、教育、家庭等），互不影响，在「基础信息」页里切换方向分别维护。</p>
+            </div>
+            <div class="toolbar-actions">
+              <button class="secondary-button" id="parse-toggle-button" type="button">AI 解析简历</button>
+              <button class="primary-button" id="import-template-button" type="button">导入 Excel</button>
+            </div>
+          </div>
+
+          <input id="template-file-input" type="file" accept=".xlsx,.csv" hidden>
+
+          <div class="parse-section" id="parse-section">
+            <div class="parse-section__desc">上传 PDF / Word / TXT，AI 提取后存成一份新的我的信息，或更新当前这一份</div>
+            <div class="parse-drop-zone" id="parse-drop-zone">
+              <span id="parse-drop-label">拖拽简历文件到此处，或点击选择</span>
+              <input type="file" id="parse-file-input" accept=".pdf,.docx,.txt" hidden>
+            </div>
+            <button class="primary-button is-full" id="parse-resume-button" type="button" disabled>
+              开始解析
+            </button>
+            <button class="secondary-button is-full" id="parse-download-button" type="button" hidden>
+              下载 Excel 核对
+            </button>
+            <div class="parse-progress" id="parse-progress" hidden aria-label="解析进度">
+              <div class="parse-progress__track"><span id="parse-progress-fill"></span></div>
+              <span id="parse-progress-label">准备中</span>
+            </div>
+            <div class="status-message" id="parse-status" aria-live="polite"></div>
+
+            <div class="backup-confirm" id="parse-save-confirm" hidden>
+              <span id="parse-save-confirm-text"></span>
+              <div class="backup-confirm__actions">
+                <button class="secondary-button" id="parse-save-new-button" type="button">存成新的</button>
+                <button class="secondary-button" id="parse-save-update-button" type="button">更新当前这份</button>
+                <button class="text-button" id="parse-save-cancel-button" type="button">先不保存</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="status-message" id="template-status" aria-live="polite"></div>
+
+          <div class="template-list" id="template-list"></div>
+
+          <div class="backup-confirm" id="rename-confirm" hidden>
+            <span class="backup-confirm__text" id="rename-hint"></span>
+            <div class="rename-row">
+              <input id="rename-input" type="text" maxlength="60" autocomplete="off" aria-label="我的信息名称" placeholder="比如：硬件方向">
+              <button class="secondary-button" id="rename-save-button" type="button">保存名称</button>
+              <button class="text-button" id="rename-cancel-button" type="button">取消</button>
+            </div>
+          </div>
+
+          <div class="backup-row">
+            <div class="backup-row__actions">
+              <button class="text-button" id="export-backup-button" type="button">导出备份</button>
+              <button class="text-button" id="import-backup-button" type="button">导入备份</button>
+              <label class="backup-row__key">
+                <input id="backup-include-key" type="checkbox">
+                <span>包含 API Key</span>
+              </label>
+            </div>
+            <p class="backup-row__hint">备份包含全部我的信息、基础信息和 AI 配置，换电脑或重装后导入即可。<br>文件是明文的，里面有简历和我的信息（证件号、电话、家庭成员等），请存在自己控制的位置。</p>
+
+            <input id="backup-file-input" type="file" accept=".json,application/json" hidden>
+
+            <div class="backup-confirm is-warning" id="backup-key-confirm" hidden>
+              <p class="backup-confirm__text">
+                导出的文件会包含 API Key，明文保存。不要分享，也不要传网盘。<br>
+                插件不收集、不上传任何数据，文件只在你自己的电脑上。
+              </p>
+              <div class="backup-confirm__actions">
+                <button class="secondary-button" id="backup-key-confirm-button" type="button">确认导出</button>
+                <button class="text-button" id="backup-key-cancel-button" type="button">取消</button>
+              </div>
+            </div>
+
+            <div class="backup-confirm" id="backup-confirm" hidden>
+              <span id="backup-confirm-text"></span>
+              <div class="backup-confirm__actions">
+                <button class="secondary-button" id="backup-append-button" type="button">追加</button>
+                <button class="secondary-button" id="backup-replace-button" type="button">替换现有我的信息</button>
+                <button class="text-button" id="backup-cancel-button" type="button">取消</button>
+              </div>
+            </div>
+
+            <div class="status-message" id="backup-status" aria-live="polite"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="profile">
+        <div class="panel-card">
+          <div class="panel-toolbar is-stacked">
+            <div>
+              <h2>基础信息</h2>
+              <p>每份「我的信息」各存一份：网申表常问、简历里没有的内容填在这里，AI 填写时和当前那份我的信息一起用。我的信息里已有的字段以那一份为准。</p>
+            </div>
+          </div>
+
+          <p class="profile-note">只保存在这个浏览器里，我们不收集。AI 填写时会发给你配置的 AI 服务商，对方可能留存。</p>
+
+          <div class="profile-scope">
+            <div class="field-block">
+              <label for="profile-direction-select"><span>正在编辑的我的信息</span></label>
+              <select id="profile-direction-select"></select>
+            </div>
+            <div class="profile-scope__actions">
+              <button class="secondary-button" id="profile-rename-entry" type="button">重命名</button>
+              <button class="secondary-button" id="profile-copy-entry" type="button">复制当前信息</button>
+              <button class="secondary-button" id="profile-add-entry" type="button">新建空白信息</button>
+            </div>
+            <div class="profile-rename-confirm backup-confirm" id="profile-rename-confirm" hidden>
+              <span class="backup-confirm__text">修改当前这份信息的名称：</span>
+              <div class="rename-row">
+                <input id="profile-rename-input" type="text" maxlength="60" autocomplete="off" aria-label="当前我的信息名称" placeholder="比如：硬件方向">
+                <button class="secondary-button" id="profile-rename-save-button" type="button">保存名称</button>
+                <button class="text-button" id="profile-rename-cancel-button" type="button">取消</button>
+              </div>
+            </div>
+            <p class="profile-scope__note" id="profile-scope-note"></p>
+          </div>
+
+          <div class="profile-layout">
+            <aside class="profile-index" id="profile-index" aria-label="基础信息索引"></aside>
+            <form id="profile-form" class="config-form">
+              <div id="profile-preset"></div>
+
+              <section class="profile-group" id="profile-section-education">
+                <h3 class="profile-group__title">教育经历</h3>
+                <p class="profile-group__hint">可添加本科、硕士等多段经历；每段按目标网申表的字段保存。</p>
+                <div class="profile-rows" id="profile-education"></div>
+                <button class="secondary-button" id="profile-add-education" type="button">添加教育经历</button>
+              </section>
+
+              <section class="profile-group" id="profile-section-family">
+                <h3 class="profile-group__title">家庭主要成员</h3>
+                <div class="profile-rows" id="profile-family"></div>
+                <button class="secondary-button" id="profile-add-member" type="button">添加成员</button>
+              </section>
+
+              <div id="profile-extra-groups"></div>
+
+              <section class="profile-group" id="profile-section-custom">
+                <h3 class="profile-group__title">补充字段</h3>
+                <p class="profile-group__hint">上面没有的字段自己加。填表后网页上空着的字段，可以在侧边栏一键加到这里。</p>
+                <div class="profile-rows" id="profile-custom"></div>
+                <button class="secondary-button" id="profile-add-custom" type="button">添加字段</button>
+              </section>
+
+              <button class="primary-button is-full" type="submit">保存</button>
+              <div class="status-message" id="profile-status" aria-live="polite"></div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="ai">
+        <div class="panel-card">
+          <div class="panel-toolbar is-stacked">
+            <div>
+              <h2>AI 配置</h2>
+              <p>支持 OpenAI 兼容接口，用于网页表单智能匹配。</p>
+            </div>
+          </div>
+
+          <form id="ai-config-form" class="config-form">
+            <div class="field-block">
+              <label for="api-url-input"><span>API URL</span></label>
+              <input
+                id="api-url-input"
+                name="apiUrl"
+                type="url"
+                placeholder="https://api.openai.com/v1"
+                autocomplete="off"
+              >
+              <div class="status-message is-inline" id="url-status" aria-live="polite"></div>
+            </div>
+
+            <div class="field-block">
+              <span>API Key</span>
+              <div class="password-row">
+                <input
+                  id="api-key-input"
+                  name="apiKey"
+                  type="password"
+                  placeholder="请输入 API Key"
+                  autocomplete="off"
+                >
+                <button id="toggle-api-key" class="icon-button" type="button" aria-label="显示或隐藏 API Key">
+                  <span aria-hidden="true">👁</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="field-block">
+              <span>模型名称</span>
+              <div class="model-combo" id="model-combo">
+                <div class="password-row">
+                  <div class="model-combo__field">
+                    <input
+                      id="model-input"
+                      name="model"
+                      type="text"
+                      placeholder="gpt-4o-mini"
+                      autocomplete="off"
+                      spellcheck="false"
+                      role="combobox"
+                      aria-label="模型名称"
+                      aria-autocomplete="list"
+                      aria-expanded="false"
+                      aria-controls="model-listbox"
+                    >
+                    <button
+                      id="model-toggle"
+                      class="model-combo__toggle"
+                      type="button"
+                      tabindex="-1"
+                      aria-label="展开模型列表"
+                      hidden
+                    >▾</button>
+                  </div>
+                  <button id="fetch-models-button" class="secondary-button" type="button">获取模型</button>
+                </div>
+                <ul class="model-combo__list" id="model-listbox" role="listbox" aria-label="可选模型" hidden></ul>
+              </div>
+              <div class="status-message is-inline" id="model-status" aria-live="polite"></div>
+            </div>
+
+            <button class="primary-button is-full" type="submit">保存配置</button>
+            <div class="status-message" id="config-status" aria-live="polite"></div>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="link/secret-fields.mjs"></script>
+    <script src="xlsx.full.min.js"></script>
+    <script src="mammoth.browser.min.js"></script>
+    <script src="ai-helpers.js"></script>
+    <script src="resume-utils.js"></script>
+    <script src="profile-fields.js"></script>
+    <script src="ai-client.js"></script>
+    <script src="ai-models.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

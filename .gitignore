@@ -1,0 +1,36 @@
+# Local builds and dependency caches
+node_modules/
+dist/
+build/
+target/
+*.crx
+*.pem
+
+# Local browser and extension state
+.chrome*/
+chrome-profile*/
+*.sqlite
+*.sqlite3
+*.db
+
+# Imports, exports, backups and personally identifiable content
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.csv
+*.eml
+*.zip
+backups/
+exports/
+private/
+.env
+.env.*
+!.env.example
+
+# Credentials and logs
+*.log
+*.key
+*.p12
+*.pfx

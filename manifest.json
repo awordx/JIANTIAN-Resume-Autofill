@@ -1,0 +1,82 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "简填.JIANTIAN",
+  "version": "0.1.1",
+  "description": "求职网申场景的简历自动填写助手。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvw54FDt3uRc5KJ5wD9aLAI/xL39E7uw65DNNbXy5oiTl/PBj/t7j169cgosKpGS0IIshxA4yV4cB31TnIMXjh1WR+irtMh8qvLwvHH5ULsML/037bwOL0QxDiVp5qMk5yZvWfi27S2pk01/wbajTa43EqIcX+6egE7BeTik77DAmazBTzBj7xbLclCW+RoKmdWR0okQB0nBJMCoI8G+hkTjL8AtnrR53qiNpojOdgawhJNWgYxhGQKP4kmnJV5n+b0vyUKeCeo42lAdWwYB2Yphx/uGkg2dpCtNE0MllD3PTYY7Z48X2MQVLyU+wfuZr29q7MU2o6UcBGXWu6EP69QIDAQAB",
+  "permissions": [
+    "offscreen",
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "nativeMessaging",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Resume Pro",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "link/copy.mjs",
+        "link/extract.mjs",
+        "link/fillrecords.mjs",
+        "link/limits.mjs",
+        "link/redact.mjs",
+        "link/secret-fields.mjs",
+        "link/snapshot.mjs",
+        "link/protocol/schema-data.mjs",
+        "link/protocol/schema-lite.mjs",
+        "link/protocol/time.mjs",
+        "link/protocol/validate.mjs",
+        "content.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "exclude_matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "ai-client.js",
+        "ai-helpers.js",
+        "profile-fields.js",
+        "form-agent.js",
+        "sidebar-state.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

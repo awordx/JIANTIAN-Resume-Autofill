@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Resume Pro Desktop</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside class="nav">
+        <p class="brand">Resume Pro</p>
+        <p class="brand-sub">Desktop · 申请管理</p>
+        <nav>
+          <button type="button" data-route="applications" class="active">申请</button>
+          <button type="button" data-route="inbox">证据收件箱</button>
+          <button type="button" data-route="todos">待办</button>
+          <button type="button" data-route="settings">设置</button>
+        </nav>
+        <p id="runtime-pill" class="pill">正在读取运行状态…</p>
+      </aside>
+      <main>
+        <div id="banner" class="banner hidden"></div>
+
+        <section id="view-applications" class="view">
+          <div class="apps-toolbar">
+            <h1>申请</h1>
+            <div class="row wrap">
+              <input id="app-search" type="search" placeholder="搜索公司、岗位或地点" aria-label="搜索申请" />
+              <select id="app-stage" aria-label="阶段过滤">
+                <option value="all">全部阶段</option>
+                <option value="saved">已保存</option>
+                <option value="filling">填写中</option>
+                <option value="submitted">已投递</option>
+                <option value="assessment">测评</option>
+                <option value="interview">面试</option>
+                <option value="offer">Offer</option>
+                <option value="rejected">未通过</option>
+                <option value="withdrawn">已撤回</option>
+                <option value="closed">已关闭</option>
+              </select>
+              <select id="app-recycle" aria-label="回收状态">
+                <option value="active">进行中</option>
+                <option value="recycled">回收站</option>
+                <option value="all">全部</option>
+              </select>
+              <select id="app-sort" aria-label="排序">
+                <option value="updatedAt">更新时间</option>
+                <option value="company">公司</option>
+                <option value="title">岗位</option>
+                <option value="stage">阶段</option>
+              </select>
+              <button type="button" id="btn-new-app">新增申请</button>
+            </div>
+          </div>
+          <p id="apps-msg" class="muted" role="status"></p>
+          <div id="apps-empty" class="empty hidden">
+            <p>还没有申请记录。</p>
+            <p class="muted">不会显示虚构统计。点击「新增申请」开始手动建档。</p>
+            <button type="button" id="btn-empty-new">新增申请</button>
+          </div>
+          <div id="apps-layout" class="apps-layout hidden">
+            <div class="apps-list-pane">
+              <table class="apps-table">
+                <thead>
+                  <tr>
+                    <th>公司</th>
+                    <th>岗位</th>
+                    <th>地点</th>
+                    <th>阶段</th>
+                    <th>更新</th>
+                  </tr>
+                </thead>
+                <tbody id="apps-tbody"></tbody>
+              </table>
+              <div class="row">
+                <button type="button" id="btn-prev-page">上一页</button>
+                <span id="apps-page" class="muted"></span>
+                <button type="button" id="btn-next-page">下一页</button>
+              </div>
+            </div>
+            <div id="app-detail" class="apps-detail-pane">
+              <p class="muted">选择一条申请查看详情与时间线。</p>
+            </div>
+          </div>
+          <dialog id="app-form-dialog">
+            <form id="app-form" class="stack" method="dialog">
+              <h2 id="app-form-title">新增申请</h2>
+              <label>公司
+                <input id="f-company" name="company" required maxlength="200" />
+              </label>
+              <label>岗位
+                <input id="f-title" name="title" required maxlength="200" />
+              </label>
+              <label>链接
+                <input id="f-url" name="sourceUrl" maxlength="2000" />
+              </label>
+              <label>地点
+                <input id="f-location" name="location" maxlength="200" />
+              </label>
+              <label>备注
+                <textarea id="f-notes" name="notes" rows="3" maxlength="4000"></textarea>
+              </label>
+              <p id="app-form-msg" class="muted"></p>
+              <div class="row">
+                <button type="submit" id="btn-save-app">保存</button>
+                <button type="button" id="btn-cancel-app">取消</button>
+              </div>
+            </form>
+          </dialog>
+          <dialog id="evidence-dialog">
+            <div class="stack">
+              <h3>回复证据</h3>
+              <div id="evidence-body"></div>
+              <div class="row">
+                <button type="button" id="evidence-close">关闭</button>
+              </div>
+            </div>
+          </dialog>
+          <dialog id="snapshot-dialog">
+            <div class="stack">
+              <h3>简历快照</h3>
+              <div id="snapshot-body"></div>
+              <div class="row">
+                <button type="button" id="snapshot-close">关闭</button>
+              </div>
+            </div>
+          </dialog>
+          <dialog id="progress-dialog">
+            <form id="progress-form" class="stack">
+              <h2 id="progress-title">记录进度</h2>
+              <label>说明<input id="progress-description" maxlength="2000" /></label>
+              <label id="progress-round-label">面试轮次（可留空）<input id="progress-round" type="number" min="1" max="99" step="1" /></label>
+              <label>发生日期（留空表示未知，不用今天代替）<input id="progress-date" type="date" /></label>
+              <label><input id="progress-update" type="checkbox" /> 同时更新当前进度（默认只补录历史）</label>
+              <p id="progress-msg" class="muted"></p>
+              <div class="row"><button id="progress-save" type="submit">保存记录</button><button id="progress-cancel" type="button">取消</button></div>
+            </form>
+          </dialog>
+        </section>
+
+        <section id="view-inbox" class="view hidden">
+          <h1>证据收件箱</h1>
+          <p class="muted">把回复邮件（.eml）、截图或 PDF 拖进窗口，或者粘贴一段文本。导入只是把原件存进档案，不代表对方回复了什么，也不会改变申请阶段。</p>
+          <div class="row">
+            <button type="button" id="inbox-pick">选择文件…</button>
+            <button type="button" id="inbox-refresh">刷新</button>
+          </div>
+          <details class="inbox-paste">
+            <summary>粘贴一段文本</summary>
+            <textarea id="inbox-paste" rows="4" placeholder="把邮件正文或一段说明粘贴到这里"></textarea>
+            <button type="button" id="inbox-paste-save">导入这段文本</button>
+          </details>
+          <p id="inbox-status" class="muted"></p>
+          <div class="inbox-split">
+            <div id="inbox-list"></div>
+            <div id="inbox-preview"></div>
+          </div>
+        </section>
+
+        <section id="view-todos" class="view hidden">
+          <h1>待办</h1>
+
+          <p id="todo-reminder-note" class="note"></p>
+          <p id="todo-digest" class="note" hidden></p>
+
+          <form id="todo-form" class="stack">
+            <label>做什么
+              <input id="todo-title" name="title" autocomplete="off" required />
+            </label>
+            <label>属于哪条申请
+              <select id="todo-application" name="applicationId"></select>
+            </label>
+            <div class="row">
+              <label>什么时候
+                <select id="todo-precision" name="duePrecision">
+                  <option value="none">没有到期</option>
+                  <option value="date">只有日期</option>
+                  <option value="datetime">具体到几点</option>
+                </select>
+              </label>
+              <input id="todo-date" name="dueDate" type="date" hidden />
+              <input id="todo-datetime" name="dueAtUtc" type="datetime-local" hidden />
+            </div>
+            <div class="row">
+              <label>时区
+                <input id="todo-timezone" name="timeZone" placeholder="Asia/Shanghai" autocomplete="off" />
+              </label>
+              <label>提醒时刻（留空则按到期）
+                <input id="todo-remind" name="remindAtUtc" type="datetime-local" />
+              </label>
+              <label>面试第几轮
+                <input id="todo-round" name="interviewRound" type="number" min="1" />
+              </label>
+            </div>
+            <div class="row">
+              <button id="todo-submit" type="submit">添加待办</button>
+              <label>只看
+                <select id="todo-filter">
+                  <option value="open">未完成</option>
+                  <option value="all">全部</option>
+                  <option value="done">已完成</option>
+                  <option value="cancelled">已取消</option>
+                </select>
+              </label>
+            </div>
+            <p id="todo-status" class="note"></p>
+          </form>
+
+          <div id="todo-list"></div>
+        </section>
+
+        <section id="view-settings" class="view hidden">
+          <h1>设置</h1>
+          <div id="facts"></div>
+
+          <h2>版本与更新</h2>
+          <p class="muted">
+            只检查、只告诉你，不会自己下载或安装——安装包没有签名，下载哪一个该由你决定。
+          </p>
+          <div class="row">
+            <button type="button" id="update-check" disabled>检查更新</button>
+            <button type="button" id="update-open" hidden>去下载页</button>
+          </div>
+          <p id="update-msg" class="note"></p>
+          <label>
+            <input type="checkbox" id="update-auto" />
+            启动时自动检查（每天最多一次）
+          </label>
+
+          <h2>连接浏览器</h2>
+          <p class="muted">
+            桌面和浏览器扩展连上之后，保存岗位、填写留档才会同步到这里。扩展的 ID 是固定的，正常情况下你不用填任何东西。
+          </p>
+          <p id="link-state" class="note"></p>
+          <p id="link-next" class="muted"></p>
+          <div class="row">
+            <button type="button" id="link-install">去装扩展</button>
+            <button type="button" id="link-retry">重试注册</button>
+          </div>
+          <p class="muted" id="link-after-install"></p>
+          <details>
+            <summary>开发者模式：手动指定扩展 ID</summary>
+            <p class="muted" id="link-store-pending"></p>
+            <p class="muted">
+              只有用「加载已解压的扩展程序」且没有固定公钥时才需要填。填了会一并写进 host 清单的
+              <code>allowed_origins</code>，正式那条 ID 不会被顶掉。
+            </p>
+            <form id="pairing-form" class="stack">
+              <label>Chrome 扩展 ID
+                <input id="chrome-id" name="chrome" autocomplete="off" spellcheck="false" />
+              </label>
+              <label>Edge 扩展 ID
+                <input id="edge-id" name="edge" autocomplete="off" spellcheck="false" />
+              </label>
+              <button type="submit">保存并重写清单</button>
+              <p id="pairing-msg" class="muted"></p>
+            </form>
+          </details>
+
+          <h2>AI 整理（桌面）</h2>
+          <div id="ai-settings"></div>
+
+          <h2>备份与恢复</h2>
+          <p id="backup-export-note" class="muted"></p>
+          <div class="row">
+            <button type="button" id="backup-export">导出备份</button>
+            <button type="button" id="backup-choose-restore">从备份恢复…</button>
+          </div>
+          <p id="backup-restore-note" class="muted"></p>
+          <p id="backup-status" class="note"></p>
+
+          <div id="backup-preview" class="panel" hidden>
+            <div id="backup-preview-text"></div>
+            <div class="row">
+              <button type="button" id="backup-confirm-restore" class="danger">确认恢复</button>
+              <button type="button" id="backup-cancel-restore">取消</button>
+            </div>
+          </div>
+
+          <h3>回滚点</h3>
+          <ul id="backup-rollback-list" class="plain"></ul>
+
+          <h3>回收站</h3>
+          <ul id="recycle-list" class="plain"></ul>
+
+          <h3>孤立附件</h3>
+          <p class="muted">检查有没有不再被任何证据引用的附件。只报告，删除要逐项确认。</p>
+          <div class="row"><button type="button" id="orphan-check">检查</button></div>
+          <div id="orphan-report"></div>
+
+          <h2>提醒</h2>
+          <p id="settings-reminder" class="note"></p>
+          <p class="muted" id="settings-reminder-window"></p>
+          <table id="settings-lifecycle"></table>
+
+          <h2>窗口与退出</h2>
+          <p class="muted">点窗口关闭按钮会隐藏到托盘/菜单栏，进程仍是唯一写入者。只有「退出应用」才会结束宿主。</p>
+          <div class="row">
+            <button type="button" id="btn-hide">隐藏窗口</button>
+            <button type="button" id="btn-quit" class="danger">退出应用</button>
+            <button type="button" id="btn-diag">导出诊断</button>
+          </div>
+          <p id="diag-msg" class="muted"></p>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

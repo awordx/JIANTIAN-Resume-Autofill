@@ -1,0 +1,332 @@
+import { buildEnvelope } from './envelope.mjs';
+import { sendOnce } from './transport.mjs';
+import { MAX_OUTBOX } from './limits.mjs';
+import { nextDelayMs, waitsForFill } from './drain.mjs';
+import { SNAPSHOT_UPLOAD } from './uploads.mjs';
+
+/**
+ * Bound messages: the queue that exists once the user has chosen what to bind to.
+ *
+ * Two rules shape everything here:
+ *
+ *  - The entry is persisted before it is sent. If the worker dies between the send and the
+ *    reply, the same messageId has to be there to retry with; minting a new one on the way
+ *    back is how one job becomes two applications.
+ *  - `sourceRestoreEpoch` is stamped at bind time and never rewritten. The envelope follows
+ *    the current handshake, the payload remembers what the user actually chose. Refreshing
+ *    the payload would silently replay the job into an archive the user never saw.
+ */
+export function createOutbox({ store, uuid, now, sendNative, sleep, uploads = null }) {
+  const wire = { sendNative, sleep };
+
+  async function queryCandidates({ identity, fields }) {
+    if (!identity) return { status: 'rejected', reason: 'no_identity' };
+
+    const payload = { company: fields.company, title: fields.title };
+    if (fields.sourceUrl) payload.sourceUrl = fields.sourceUrl;
+
+    const message = await buildEnvelope({
+      messageType: 'application.queryCandidates',
+      messageId: uuid(),
+      clientInstanceId: await store.clientInstanceId(),
+      payload,
+      identity,
+      now
+    });
+
+    const result = await sendOnce(message, wire);
+    if (result.status !== 'ok') {
+      // An empty list would read as "nothing matches", which pushes the user into creating a
+      // duplicate. An unreachable desktop has to say so.
+      return { status: result.status, code: result.code };
+    }
+    return {
+      status: 'ok',
+      exact: result.response.payload.exact ?? [],
+      sameCompany: result.response.payload.sameCompany ?? []
+    };
+  }
+
+  async function bindAndSend({ intentId, applicationId = null, identity }) {
+    if (!identity) return { status: 'rejected', reason: 'no_identity' };
+
+    const intents = await store.getIntents();
+    const intent = intents.find(item => item.intentId === intentId);
+    if (!intent) return { status: 'rejected', reason: 'unknown_intent' };
+
+    const payload = { company: intent.fields.company, title: intent.fields.title };
+    if (intent.fields.sourceUrl) payload.sourceUrl = intent.fields.sourceUrl;
+    if (intent.fields.location) payload.location = intent.fields.location;
+    if (applicationId) payload.applicationId = applicationId;
+
+    return enqueue({ messageType: 'job.save', payload, applicationId, intentId, identity });
+  }
+
+  /**
+   * The user says they actually applied.
+   *
+   * §5.2 rule 5: this is unrelated to saving the posting and unrelated to whether the AI
+   * fill worked. It is its own write, and it goes through the same queue, backoff and
+   * reconciliation as everything else.
+   */
+  async function confirmSubmit({ applicationId, identity }) {
+    if (!identity) return { status: 'rejected', reason: 'no_identity' };
+    if (!applicationId) return { status: 'rejected', reason: 'no_application' };
+    return enqueue({
+      messageType: 'submit.confirm',
+      payload: { applicationId },
+      applicationId,
+      intentId: null,
+      identity
+    });
+  }
+
+  /**
+   * Send one archived fill (D08) to the application the user picked.
+   *
+   * The record has already been claimed for that application (link/fillrecords.mjs), which
+   * is what stops two clicks from sending it twice. The payload is the allowlisted fill body
+   * plus the application; field values never get this far.
+   */
+  async function sendFill({ record, applicationId, identity, snapshot = null }) {
+    if (!identity) return { status: 'rejected', reason: 'no_identity' };
+    if (!applicationId) return { status: 'rejected', reason: 'no_application' };
+    const payload = { applicationId, ...record.fill };
+    // The event names its snapshot by id and content digest, never by bytes (§8.5). The
+    // protocol requires the two together or neither.
+    if (snapshot?.snapshotId && snapshot?.sha256) {
+      payload.snapshotId = snapshot.snapshotId;
+      payload.sha256 = snapshot.sha256;
+    }
+    return enqueue({
+      messageType: 'fill.submit',
+      payload,
+      applicationId,
+      intentId: null,
+      recordId: record.recordId,
+      occurredAt: record.occurredAt ?? null,
+      identity
+    });
+  }
+
+  // Persist, then send. Never the other way round: an entry that exists only in flight cannot
+  // be retried with the same identity after the worker dies.
+  async function enqueue({ messageType, payload, applicationId, intentId, recordId = null, occurredAt = null, identity }) {
+    const entry = {
+      messageId: uuid(),
+      intentId,
+      recordId,
+      // When it happened, if that is not "now" (a fill recorded offline): every attempt says so.
+      ...(occurredAt ? { occurredAt } : {}),
+      clientInstanceId: await store.clientInstanceId(),
+      messageType,
+      archiveId: identity.archiveId,
+      sourceRestoreEpoch: identity.restoreEpoch,
+      applicationId,
+      payload,
+      createdAt: now().toISOString(),
+      bytes: new TextEncoder().encode(JSON.stringify(payload)).length,
+      status: 'pending',
+      attempts: 0,
+      // Due immediately. Every later attempt gets a time from the backoff ladder.
+      nextAttemptAt: now().toISOString(),
+      lastError: null
+    };
+
+    // Both guards live in the same queued step as the append.
+    //
+    // The intent guard is what makes a double-clicked bind button harmless: two entries for
+    // one intent carry two messageIds, and two messageIds are two applications, because the
+    // desktop can only recognise a replay by identity. Checked outside the callback, both
+    // clicks see a queue without the other's entry in it.
+    let outcome = null;
+    await store.updateOutbox(list => {
+      if (intentId && list.some(item => item.intentId === intentId)) {
+        outcome = { status: 'duplicate', reason: 'already_queued' };
+        return list;
+      }
+      if (recordId && list.some(item => item.recordId === recordId)) {
+        outcome = { status: 'duplicate', reason: 'already_queued' };
+        return list;
+      }
+      if (list.length >= MAX_OUTBOX) {
+        outcome = { status: 'rejected', reason: 'queue_full' };
+        return list;
+      }
+      return [...list, entry];
+    });
+    if (outcome) return outcome;
+
+    return deliver(entry, identity);
+  }
+
+  /**
+   * One pass over the pending entries.
+   *
+   * Serial on purpose: parallel sends race for the same cold start, and the host answers all
+   * but one of them with `unavailable` for no reason.
+   */
+  async function drainOnce({ identity }) {
+    const saved = [];
+    const pending = [];
+    const failed = [];
+
+    for (const entry of await store.getOutbox()) {
+      if (entry.status !== 'pending') continue;
+      if (!isDue(entry)) continue;
+      // Read again: the event this upload waits for may have been accepted earlier in this pass.
+      if (waitsForFill(entry, await store.getOutbox())) continue;
+      const result = await deliver(entry, identity);
+      if (result.status === 'saved') saved.push(result);
+      else if (result.status === 'failed') failed.push(result);
+      else pending.push(result);
+    }
+
+    return { saved, pending, failed };
+  }
+
+  /**
+   * Queue an entry built elsewhere — a snapshot upload (link/uploads.mjs). Same guards as a
+   * bound message: no second entry under the same id, and a full queue refuses rather than
+   * dropping the oldest. Not sent here; the drain picks it up.
+   */
+  async function add(entry) {
+    let outcome = { status: 'queued' };
+    await store.updateOutbox(list => {
+      if (list.some(item => item.messageId === entry.messageId)) {
+        outcome = { status: 'duplicate', reason: 'already_queued' };
+        return list;
+      }
+      if (list.length >= MAX_OUTBOX) {
+        outcome = { status: 'rejected', reason: 'queue_full' };
+        return list;
+      }
+      return [...list, entry];
+    });
+    return outcome;
+  }
+
+  async function deliver(entry, identity) {
+    if (entry.messageType === SNAPSHOT_UPLOAD) {
+      return uploads ? uploads.deliver(entry, identity) : { status: 'pending', messageId: entry.messageId };
+    }
+    if (!identity) return { status: 'pending', entry };
+
+    const message = await buildEnvelope({
+      messageType: entry.messageType,
+      messageId: entry.messageId,
+      clientInstanceId: entry.clientInstanceId,
+      payload: entry.payload,
+      identity,
+      sourceRestoreEpoch: entry.sourceRestoreEpoch,
+      occurredAt: entry.occurredAt,
+      now
+    });
+
+    const result = await sendOnce(message, wire);
+
+    if (result.status === 'ok') {
+      // The desktop has committed. Only now may the intent and the queue entry go, and only
+      // now may the sidebar say the desktop has it.
+      await store.updateOutbox(list => list.filter(item => item.messageId !== entry.messageId));
+      await forgetSource(store, entry);
+      return {
+        status: 'saved',
+        messageId: entry.messageId,
+        resultId: result.resultId,
+        applicationId: entry.applicationId ?? result.resultId
+      };
+    }
+
+    if (result.status === 'fatal') {
+      await patch(entry.messageId, item => ({
+        ...item,
+        status: 'failed',
+        attempts: item.attempts + 1,
+        lastError: result.code
+      }));
+      return { status: 'failed', messageId: entry.messageId, code: result.code };
+    }
+
+    const attempts = entry.attempts + 1;
+    const delay = nextDelayMs(attempts);
+    await patch(entry.messageId, item => ({
+      ...item,
+      attempts,
+      // No rung left: stop retrying and say so. The entry is not lost and not failed — it is
+      // waiting for the user to retry it or give up on it.
+      status: delay === null ? 'stalled' : 'pending',
+      nextAttemptAt: delay === null ? null : new Date(now().getTime() + delay).toISOString(),
+      lastError: result.code ?? result.status
+    }));
+    return {
+      status: delay === null ? 'stalled' : 'pending',
+      messageId: entry.messageId,
+      code: result.code ?? result.status
+    };
+  }
+
+  function isDue(entry) {
+    if (!entry.nextAttemptAt) return false;
+    return Date.parse(entry.nextAttemptAt) <= now().getTime();
+  }
+
+  // A message that is only waiting for the retry ladder. A paused or needs_user entry is
+  // waiting for something else entirely: its stamped epoch no longer exists on the desktop,
+  // so sending it again is not a retry, it is a write the desktop has to refuse.
+  const RETRYABLE_STATES = new Set(['pending', 'stalled', 'failed']);
+
+  /**
+   * Used by a manual retry: clear the wait and un-stall the entry.
+   *
+   * The identity, the messageId and the stamped epoch are untouched — this is the same
+   * message, sent again. Refuses anything the reconcile flow owns.
+   */
+  async function markDue(messageId, at) {
+    const entry = (await store.getOutbox()).find(item => item.messageId === messageId);
+    if (!entry) return { status: 'rejected', reason: 'unknown_message' };
+    if (!RETRYABLE_STATES.has(entry.status)) {
+      return { status: 'rejected', reason: 'awaiting_reconcile' };
+    }
+    await patch(messageId, item => ({ ...item, status: 'pending', nextAttemptAt: at.toISOString() }));
+    return { status: 'ok' };
+  }
+
+  async function deliverOne(messageId, identity) {
+    const queue = await store.getOutbox();
+    const entry = queue.find(item => item.messageId === messageId);
+    if (!entry) return { status: 'rejected', reason: 'unknown_message' };
+    if (waitsForFill(entry, queue)) return { status: 'pending', messageId };
+    return deliver(entry, identity);
+  }
+
+  const patch = (messageId, change) => store.updateOutbox(list =>
+    list.map(item => (item.messageId === messageId ? change(item) : item))
+  );
+
+  return {
+    queryCandidates,
+    bindAndSend,
+    confirmSubmit,
+    sendFill,
+    add,
+    drainOnce,
+    deliverOne,
+    markDue,
+    list: () => store.getOutbox(),
+    remove: messageId => store.updateOutbox(list => list.filter(item => item.messageId !== messageId))
+  };
+}
+
+/**
+ * The intent or fill record a finished entry came from. Called once the desktop holds the
+ * write (or the user discarded it): the source has nothing left to wait for.
+ */
+export async function forgetSource(store, entry) {
+  if (entry.intentId) {
+    await store.updateIntents(list => list.filter(item => item.intentId !== entry.intentId));
+  }
+  if (entry.recordId) {
+    await store.updateFillRecords(list => list.filter(item => item.recordId !== entry.recordId));
+  }
+}

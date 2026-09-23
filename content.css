@@ -1,0 +1,583 @@
+:host {
+  display: block;
+  width: fit-content;
+}
+
+:host .resume-pro {
+  width: 320px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #d8dfd8;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(36, 72, 56, 0.16);
+  color: #24352f;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  overflow: hidden;
+}
+
+:host .resume-pro.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+:host .resume-pro__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 12px;
+  background: #245c4a;
+  color: #fff;
+  cursor: grab;
+}
+
+:host .resume-pro__title-wrap {
+  min-width: 0;
+}
+
+:host .resume-pro__eyebrow {
+  margin: 0 0 4px;
+  opacity: 0.85;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+:host .resume-pro__title {
+  display: block;
+  font-size: 16px;
+}
+
+:host .resume-pro__collapse {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+:host .resume-pro__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  overflow: auto;
+}
+
+:host .resume-pro__profile-card {
+  padding: 12px;
+  border: 1px solid #d8dfd8;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+:host .resume-pro__profile-card-title {
+  margin-bottom: 9px;
+  color: #245c4a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+:host .resume-pro__profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+:host .resume-pro__profile-grid div {
+  min-width: 0;
+}
+
+:host .resume-pro__profile-grid span,
+:host .resume-pro__profile-grid strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:host .resume-pro__profile-grid span {
+  color: #6d7c75;
+  font-size: 11px;
+}
+
+:host .resume-pro__profile-grid strong {
+  margin-top: 2px;
+  color: #24352f;
+  font-size: 12px;
+}
+
+:host .resume-pro__resume-details {
+  border: 1px solid #e1e6df;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+:host .resume-pro__resume-heading {
+  padding: 10px 12px;
+  color: #245c4a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+:host .resume-pro__resume-details > .resume-pro__groups {
+  padding: 0 10px 10px;
+}
+
+:host .resume-pro__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+:host .resume-pro__select,
+:host .resume-pro__ai-button,
+:host .resume-pro__footer-link,
+:host .resume-pro__chip,
+:host .resume-pro__collapse {
+  font: inherit;
+}
+
+:host .resume-pro__select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d8dfd8;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #24352f;
+}
+
+:host .resume-pro__ai-button {
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: #245c4a;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  box-shadow: 0 10px 22px rgba(36, 92, 74, 0.24);
+}
+
+:host .resume-pro__ai-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+:host .resume-pro__status {
+  display: none;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* AI 等待期间的进度：字段数 + 参考耗时 + 一条流光进度条（宽度来自 --rp-progress） */
+:host #resume-pro-wait-hint {
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: rgba(99, 102, 241, 0.09);
+  color: #4338ca;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+:host #resume-pro-wait-hint::after {
+  content: "";
+  display: block;
+  height: 3px;
+  margin-top: 7px;
+  width: var(--rp-progress, 0%);
+  background: linear-gradient(90deg, #6366f1, #38bdf8);
+  border-radius: 999px;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+  transition: width 0.45s ease;
+}
+
+:host .resume-pro__status.is-visible {
+  display: block;
+}
+
+:host .resume-pro__status.is-success {
+  background: rgba(33, 185, 122, 0.12);
+  color: #21b97a;
+}
+
+:host .resume-pro__status.is-error {
+  background: rgba(227, 93, 106, 0.12);
+  color: #d54f6f;
+}
+
+:host .resume-pro__divider {
+  height: 1px;
+  background: rgba(79, 110, 247, 0.12);
+}
+
+:host .resume-pro__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+:host .resume-pro__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #d8dfd8;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+:host .resume-pro__group-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #245c4a;
+  letter-spacing: 0.01em;
+}
+
+:host .resume-pro__group-name::after {
+  content: "";
+  display: block;
+  width: 28px;
+  height: 2px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: #245c4a;
+  opacity: 0.55;
+}
+
+:host .resume-pro__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+:host .resume-pro__chip {
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d8dfd8;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #245c4a;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+:host .resume-pro__chip:hover,
+:host .resume-pro__chip:focus-visible {
+  background: #ffffff;
+  color: #245c4a;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(36, 92, 74, 0.15);
+}
+
+:host .resume-pro__chip.is-in-field {
+  background: #245c4a;
+  color: #fff;
+}
+
+:host .resume-pro__chip-actions {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  min-width: 116px;
+  padding: 6px;
+  gap: 6px;
+  border: 1px solid rgba(79, 110, 247, 0.2);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(30, 41, 59, 0.2);
+}
+
+:host .resume-pro__chip-actions[hidden] {
+  display: none;
+}
+
+:host .resume-pro__chip-actions button {
+  flex: 1;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #3855d9;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+:host .resume-pro__chip-actions button:hover,
+:host .resume-pro__chip-actions button:focus-visible {
+  background: #245c4a;
+  color: #fff;
+  outline: none;
+}
+
+:host .resume-pro__empty {
+  padding: 20px 14px;
+  border: 1px dashed rgba(79, 110, 247, 0.24);
+  border-radius: 14px;
+  background: #ffffff;
+  color: #245c4a;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+:host .resume-pro__empty p {
+  margin: 0 0 12px;
+}
+
+:host .resume-pro__setup-button {
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: #245c4a;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 6px 16px rgba(79, 110, 247, 0.28);
+}
+
+:host .resume-pro__footer-tip {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #245c4a;
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+:host .resume-pro__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:host .resume-pro__manager-button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: #245c4a;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+:host .resume-pro.is-collapsed {
+  width: 160px;
+}
+
+:host .resume-pro.is-collapsed .resume-pro__body {
+  display: none;
+}
+
+.resume-pro__diagnostics {
+  color: #334155;
+  font-size: 12px;
+}
+
+.resume-pro__diagnostics summary {
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.resume-pro__diagnostics textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #dfe3ff;
+  border-radius: 8px;
+  background: #f8f9ff;
+  color: #334155;
+  font: 11px/1.6 ui-monospace, monospace;
+  resize: vertical;
+}
+
+/* Desktop link: save a job, and the pending-sync queue. */
+.resume-pro__desktop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resume-pro__save-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.resume-pro__field em {
+  color: #dc2626;
+  font-style: normal;
+  margin-left: 2px;
+}
+
+.resume-pro__save-form input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.resume-pro__save-form input[readonly] {
+  background: rgba(226, 232, 240, 0.6);
+  color: #475569;
+}
+
+.resume-pro__save-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.resume-pro__save-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.resume-pro__desktop-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.resume-pro__desktop-status:empty {
+  display: none;
+}
+
+.resume-pro__desktop-status p {
+  margin: 0;
+}
+
+.resume-pro__desktop-status.is-pending {
+  color: #b45309;
+}
+
+.resume-pro__desktop-status.is-warn {
+  color: #b91c1c;
+}
+
+.resume-pro__desktop-status.is-info {
+  color: #334155;
+}
+
+.resume-pro__desktop-status.is-success {
+  color: #15803d;
+}
+
+.resume-pro__extension-id {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.resume-pro__pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.resume-pro__pending-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(241, 245, 249, 0.9);
+  font-size: 12px;
+}
+
+.resume-pro__pending-row em {
+  grid-column: 1 / -1;
+  font-style: normal;
+  font-size: 11px;
+  color: #b45309;
+}
+
+/* The hidden attribute has to win inside the sidebar. Several panels (the save form, the
+   candidate box, the fill-record card) are flex boxes toggled with `hidden`, and an author
+   `display` rule beats the browser's own [hidden] rule — they would all show, empty. */
+.resume-pro [hidden] {
+  display: none !important;
+}
+
+.resume-pro__candidates,
+.resume-pro__fill-record {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.resume-pro__fill-record-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #475569;
+  cursor: pointer;
+}
+
+.resume-pro__fill-record-option input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.resume-pro__candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.resume-pro__candidate {
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.resume-pro__candidate:hover {
+  border-color: rgba(37, 99, 235, 0.6);
+  background: rgba(37, 99, 235, 0.06);
+}

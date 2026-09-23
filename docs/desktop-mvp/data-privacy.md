@@ -1,0 +1,400 @@
+# 数据归属、隐私与备份规则
+
+| 字段 | 值 |
+| --- | --- |
+| 标题 | 本地档案所有权、敏感分级与备份恢复 |
+| 作者 | D01 design PR |
+| 日期 | 2026-09-06 |
+| 状态 | 可修订开工基线（PR 合并后生效） |
+| 上级 | [README.md](README.md) · [D01 #17](https://github.com/awordx/JIANXING-Resume-Autofill/issues/17) |
+| 并列 | [product-requirements.md](product-requirements.md) · [adr-architecture.md](adr-architecture.md) · [downstream-decisions.md](downstream-decisions.md) |
+
+本文回答：数据在哪、谁能写、什么永远不能存、离线快照字节放哪、备份装了什么、恢复如何隔离旧队列。物理 schema 仍归 D03；备份格式版本归 D12。目录与凭据有平台适配；档案文件格式跨平台。
+
+---
+
+## 1. Overview
+
+求职档案（申请、事件、附件、简历快照、待办、已确认的 AI 建议结果）**归用户本机上的桌面档案目录所有**。浏览器插件不是权威源：它持有可编辑的活模板和自己的 AI Key，并可在用户同意后向桌面投递岗位/填写事件。
+
+没有云账号、没有多设备同步。使用用户配置的云端模型时，必须展示外发范围；不得宣传「装了本地应用 = AI 全部在本地」。
+
+---
+
+## 2. 所有权与信任边界
+
+| 数据 | 所有者 | 权威副本 | 允许的副本 |
+| --- | --- | --- | --- |
+| 申请 / 事件 / 待办 / 证据 / 快照 | 用户 | Tauri 后端（`data-service` 库）管理的 archive 目录 | 用户导出的备份文件 |
+| 插件模板、`activeTemplateId` | 用户 | `chrome.storage.local` | 填写归档时生成的 **不可变快照** |
+| 插件 `aiConfig.apiKey` | 用户 | 仅扩展存储（今天明文） | **禁止**复制到桌面档案或备份 |
+| 桌面模型 Key（D11） | 用户 | OS 凭据库：Windows Credential Manager / DPAPI；macOS Keychain | **禁止**进 SQLite、附件、备份、日志 |
+| 保存意图 / 绑定 outbox | 用户 | `chrome.storage.local` 新 key | 不得含 Key；绑定项以不可变 `sourceRestoreEpoch` 盖章；恢复后与 current 不符则暂停，信封不得被桌面改写成当前身份 |
+| 所有待提交快照字节（在线/离线） | 用户 | 扩展源 **IndexedDB**（SW/offscreen/扩展页） | 完整快照持久化且总哈希 ACK 后才可删除；不得写在页面源 |
+
+写入者：仅 **应用进程**（`data-service` 库）。插件、WebView 子进程、NM host 都是客户端。从未配对时，插件不得把申请档案写进扩展存储冒充桌面库，也不得堆积意图。曾经配对但桌面不可用时，只允许 SaveIntent + IndexedDB 快照暂存，不得显示已保存。
+
+---
+
+## 3. 目录布局
+
+安装目录 ≠ 用户数据目录 ≠ 缓存目录。档案必须与程序文件分离，避免升级覆盖或卸载误删。
+
+**禁止**把开发机绝对路径写进产品。设置页展示解析后的真实路径（中文/空格用户名）。目录不可写时失败，**禁止**静默改用临时目录。
+
+Windows（Known Folder `FOLDERID_LocalAppData`）：
+
+```text
+%LOCALAPPDATA%\ResumePro\
+  archive\             current 档案
+    archive.db
+    attachments\
+    snapshots\
+    tmp\
+    meta.json          archiveId, schemaVersion（不含 restoreEpoch）
+  current.json         机器本地指针：archiveDir, archiveId, restoreEpoch
+  archives-retired\
+  logs\
+  cache\               WebView2 用户数据等
+```
+
+macOS（`NSApplicationSupportDirectory` / `NSCachesDirectory`）：
+
+```text
+~/Library/Application Support/ResumePro/
+  archive\  ... 同上结构 ...
+  current.json
+  archives-retired\
+  logs\
+~/Library/Caches/ResumePro/     缓存，卸载策略可更激进
+```
+
+当前生效的 `restoreEpoch` 只由机器本地 `current.json`（或等价指针文件）决定，不把该指针文件或“可恢复的当前 epoch”放进备份。业务回执中的 `sourceRestoreEpoch` 是历史标识，可以随数据库备份用于只读对账；它不能成为恢复后的当前身份。每次成功恢复/回滚仍新铸当前 epoch，不能从历史回执恢复权限。
+
+WebView 用户数据放在上述 cache/数据根下，不要用安装目录旁的默认文件夹。
+
+相对路径入库；拒绝 `..`、盘符、UNC。附件文件名冲突时加后缀，不覆盖（D09）。
+
+---
+
+## 4. 敏感分级
+
+与 [字段目录](product-requirements.md#8-逻辑对象与字段目录) 一致，三类：
+
+| 级 | 含义 | 例子 | 存储 |
+| --- | --- | --- | --- |
+| `public-meta` | 流程元数据 | UUID、stage code、计数、耗时、插件版本 | 可进 DB/日志（日志仍截断） |
+| `PII` | 能识别求职者或雇主沟通内容 | 公司、姓名备注、邮件正文、简历快照、地点、发件人 | 可进档案与备份；**默认不进日志**；导出备份必须警告 |
+| `secret-forbidden` | 能造成账户接管 | 见下表 | **任何层都不得保存**（唯一例外见 §4.1.1） |
+
+### 4.1 永远不得出现在档案、事件、快照、日志、备份、诊断导出中
+
+- 密码、支付口令
+- OTP / 短信验证码 / 邮箱验证码
+- API Key（插件与桌面）
+- Cookie、`Set-Cookie`
+- `Authorization` 头及其值
+- URL 中的令牌类查询参数（见 §7.1）
+- NM host 的机器专属绝对路径（备份排除；诊断可含「已配置/未配置」）
+- 网页密码框、`autocomplete=one-time-code` 的控件值
+
+插件填写路径已尽量不扫 `type=hidden|file|button|submit`；桌面留档仍要再剥一层。不确定是否为 secret 时：**丢弃该字段，不得「先存再看」。**
+
+### 4.1.1 唯一例外：用户自己导出的插件设置备份
+
+插件弹窗的「导出备份」可以写入 `aiConfig.apiKey`，四个条件必须同时满足：
+
+1. 默认不含。用户每次都要主动勾选「包含 API Key」，勾选状态不落盘。
+2. 勾选后导出前再确认一次。确认文案要说明文件是明文、不要分享，并说明插件不收集也不上传数据。
+3. 只限插件自己的 AI API Key。桌面端凭据、Cookie、`Authorization`、OTP、密码一律不适用。
+4. 只限用户点按钮触发的这一次下载。自动备份、桌面档案库备份、事件、快照、日志、诊断导出仍然一个都不许有。
+
+为什么开这个口子：这个 Key 是用户自己填进插件的，换机器时它是唯一需要搬走的凭据。堵死出口，用户会把它抄进聊天记录或者记事本，那比一个他知道风险的文件更糟。给出口并讲清楚代价，比假装问题不存在更接近本节的目的。
+
+模板里的密码 / 验证码类字段**不适用**本例外，导出前照 §4.1 剥离。
+
+### 4.2 插件活模板 vs 桌面快照
+
+- 活模板：仅 `chrome.storage.local`，用户可随时「重新导入 Excel」覆盖。
+- 快照：填写归档确认时拷贝，之后 **immutable**。无论桌面是否在线，发送前先把完整字节提交到扩展源 IndexedDB；完整持久化/总哈希 ACK 前保留原字节，分片 ACK 不触发清理。见 [产品需求 §8.5](product-requirements.md#85-resumesnapshot)。
+- 不得为了「方便同步」把活模板全量写入桌面，除非用户在某次归档中明确保存快照。
+
+---
+
+## 5. 删除、回收与永久清除
+
+| 操作 | 申请行 | 事件 | 附件 blob | 可恢复 |
+| --- | --- | --- | --- | --- |
+| 列表归档 `archivedAt` | 保留，列表默认隐藏 | 保留 | 保留 | 是 |
+| 回收 `recycleState=recycled` | 保留 | **保留** | **保留** | 是（D12） |
+| 永久删除（二次确认） | 删除或墓碑 | 随申请移除 | **仅当引用计数为 0** 才删文件 | 否 |
+| 卸载程序 | 不触碰 archive | — | — | 档案仍在磁盘 |
+
+孤立附件检查可在维护任务中列出，**不自动删除**不确定项（D12）。永久删除文案必须写清：不可从本应用撤销；若有备份可从备份恢复。
+
+永久删除正文/附件不等于清除幂等身份：同一事务保留最小消息墓碑（无正文），至少覆盖来源 epoch 的可写生命周期。旧消息重试只能得到 previously_purged，不能把用户删除的记录重新创建。墓碑允许随备份保留，具体保留/清理测试归 D03/D12。
+
+---
+
+## 6. 备份与恢复
+
+### 6.1 完整备份包含
+
+- SQLite **一致性快照**（备份前 checkpoint 或使用 SQLite backup API，D12 定）
+- **整个档案的一致性屏障：** MVP 备份期间暂停业务写入、导入完成提交与永久删除；在同一屏障内取得 DB 快照并复制它引用的全部附件/简历文件到独立 staging，再解除屏障。发布前核对 DB 的每个文件引用均存在且摘要相符，缺失则备份失败，不发布残包。若后续改用不可变文件 pin，须证明同等一致性，不允许只保证 DB 快照一致。实现归 D12。
+- `attachments/`、`snapshots/`
+- 事件、待办、已提交消息回执（含 sourceRestoreEpoch 等完整历史身份，随 DB；不包含当前指针）
+- 非秘密设置（UI 偏好、是否允许浏览器连接）
+- `manifest`：格式版本、`archiveId`、`schemaVersion`、文件清单、每文件 sha256。**不含当前生效的** `restoreEpoch`、current.json、机器 IPC 路径或凭据；数据库历史回执按上一项保留。
+
+### 6.2 明确排除
+
+- API Key、OS 凭据副本、任何 auth cache
+- 调试日志、诊断包
+- 机器专属 native-host 路径、注册表路径
+- `tmp/`、WebView2 cache、安装器自身
+- 导入任务内存中的 `sourcePathHint`：任务完成/失败/取消后清除，不持久化到 SQLite、事件、备份或诊断。保留安全文件名不等于保留原始绝对路径。
+
+### 6.3 加密
+
+**MVP 备份不加密。** 导出 UI 必须警告：文件含简历与邮件等 PII，应放在用户自己控制的位置。不得在发布说明或界面宣传「已加密」。若未来要加密，另开 issue，不在 D12 悄悄加上。
+
+#### 6.3.1 备份包含项与排除项（D12 落实）
+
+权威清单在 `desktop/crates/backup/src/exclude.rs`，并且有守卫：档案目录里出现清单没覆盖的东西，它**既不进包也不被无声忽略**，而是记进导出报告让用户看见。手写清单不带守卫必然会漏。
+
+| 进包 | 不进包 |
+| --- | --- |
+| 数据库的一致性快照（SQLite backup API，不是正在被写的 `archive.db`） | `archive.db` / `-wal` / `-shm` |
+| `meta.json`（含 archiveId，不含 restoreEpoch） | `current.json`（机器本地指针与当前 epoch） |
+| `attachments/`、`snapshots/` | `tmp/`、`backups/`、`logs/`、WebView 缓存 |
+| `settings.json` 里**白名单内**的键（目前只有配对草稿的扩展 ID） | API Key、认证缓存、机器专属 native-host 路径、`ai-settings.json`（D11 的桌面 AI 接口地址与模型名） |
+
+恢复到新目录后新铸 `restoreEpoch`；同一个备份恢复两次得到两个不同的 epoch。恢复后 `todos` 的提醒记账（`reminder_state` / `reminder_handle` / `reminder_scheduled_for_utc`）清零并重新登记——那些句柄指向的是原来那台机器上的 OS 计划；`overdue_ack_at` 保留。
+
+**卸载不得删除用户数据目录或用户导出的备份文件**（安装器在 D13 落实）。
+
+### 6.4 写入与失败
+
+写到临时目录，校验哈希后原子改名发布。失败不得覆盖已有有效备份。磁盘满：保留原档案 + 至少一个旧有效备份。
+
+### 6.5 恢复
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant UI as Desktop UI
+  participant APP as 应用进程
+  participant P as 插件绑定队列
+  U->>UI: 选择备份文件
+  UI->>APP: 校验大小/路径穿越/哈希/版本
+  APP-->>UI: 预览（申请数/事件数/附件数）
+  U->>UI: 确认恢复
+  APP->>APP: 在独立 staging 目录完整解压、校验并准备迁移；旧 current 不动
+  APP->>APP: 暂停写入，刷新新档案；新铸 restoreEpoch，原子替换 current.json
+  APP->>APP: 旧目录登记为 retired 回滚点；不在切换前搬走
+  APP-->>UI: 成功；旧目录可回滚
+  P->>APP: handshake
+  APP-->>P: 同一 archiveId + 新 restoreEpoch
+  Note over P: 握手成功；比较绑定队列盖章后暂停
+  U->>P: 关联 / 丢弃 / 另存
+```
+
+规则：
+
+1. 先预览再确认。
+2. 在独立 staging/新档案目录完成解压、路径与哈希校验、迁移验证后才切换；切换前旧目录及 current.json 原封不动。暂停写入并持久化新档案后，以原子替换 current.json 作为提交点；失败保留旧指针。崩溃恢复必须识别提交点，不能组合旧目录与新 epoch。**MVP 不做逐行 merge**。
+3. 旧档案保留为回滚点，直到用户显式删除。
+4. 损坏、截断、不支持版本、路径穿越：拒绝，**current.json 不变**（旧 epoch 仍有效）。
+5. **保留 backup 的 `archiveId`。每次成功切换 current 指针新铸 `restoreEpoch`（UUID）。** 不从备份读取 epoch，不用 `generation+1`。握手 **成功** 并返回新 `(archiveId, restoreEpoch)`。绑定队列盖章不符则暂停。意图无 epoch，恢复后重新候选。
+6. 再次恢复 **同一** 备份：再铸新 UUID，与上一次不同（走查 10.8 / 10.12）。
+7. 回滚到 retired 目录：视为一次新的指针切换，**再铸** epoch，不复用失败前的值。
+8. 握手后写入与 `outbox.reconcile` 外层必须自带当前 `(archiveId, restoreEpoch)`；缺失或不匹配直接拒绝，**禁止**桌面代填。普通写入仅在当前身份校验通过、且 `sourceRestoreEpoch` 等于 current 时，才按消息身份+摘要返回原 `resultId`。旧 epoch 只走只读对账。`not_found` 不代表从未执行，不得自动重写。完整契约见 [产品 §8.10–§8.11](product-requirements.md#810-插件队列saveintent-与-bound-outbox)。
+9. 恢复后不得瞬间重放全部待办通知；按产品 §5.4 重新登记系统调度。
+
+存储量粗估（单用户一季）：DB 数 MB；每封 eml/PDF 数十 KB–数 MB；简历快照常见为数十–数百 KiB，产品上限 **2 MiB**（超过则拒绝，走桌面导入）。备份大小 ≈ DB + 附件 + 快照。不在 D01 承诺压缩比。
+
+---
+
+## 7. 插件采集边界
+
+只记录 **用户主动** 的：保存岗位、确认投递、确认填写留档。不监听全部输入、不装全局键盘记录、不保存整页 HTML、不保存浏览历史、不保存用户未点保存的页面。
+
+### 7.1 URL 脱敏与去重 URL
+
+去掉 `https://user:pass@host/` 用户信息与 fragment。
+
+**始终剥离**（大小写不敏感；写入 `sourceUrl` 与 `dedupeUrl`）：
+
+`token`、`access_token`、`refresh_token`、`id_token`、`session`、`sessionid`、`sid`、`auth`、`authorization`、`api_key`、`apikey`、`password`、`pwd`、`secret`、`signature`、`sig`；`code`、`key` 同样**默认剥离**，只有下述已审核岗位号规则可以例外。
+
+**不存在相邻 token 参数并不能证明安全。** OAuth 回调、密码重置、magic link 常只有一个 code/key。仅当确切 HTTPS host、明确岗位页路径、参数名以及岗位编号取值语法都命中版本化、已审核的站点规则时，才可保留该岗位号；没有规则时删除。规则不得覆盖登录/回调/重置/邀请/认证路径，不根据页面自称“岗位号”、模型建议或用户临时输入自动加入 allowlist。D07 必须用该站点的正反例证明规则，不在 D01 假造实际站点名单。
+
+- `sourceUrl` 与 `dedupeUrl` 使用同一秘密剥离策略；清洗必须在入意图队列、日志或数据库之前完成，不保留秘密参数的原始副本。
+- `dedupeUrl` 再移除 `utm_*` 等明确跟踪参数并规范化 host。删除参数后可能产生候选碰撞，因此 URL 只能用于提示，不变成自动合并的唯一身份。
+
+合成例：
+
+```text
+无已审核站点规则：
+https://jobs.example.com/apply?code=REQ42&utm_source=mail&access_token=abc
+sourceUrl  = https://jobs.example.com/apply?utm_source=mail
+dedupeUrl  = https://jobs.example.com/apply
+
+https://auth.example.com/callback?code=ONE_TIME_SECRET
+sourceUrl / dedupeUrl = https://auth.example.com/callback
+
+https://portal.example.com/reset?key=RESET_SECRET
+sourceUrl / dedupeUrl = https://portal.example.com/reset
+```
+
+allowlist 正例必须与同 host 的认证路径反例一起验收；未知站点、重复参数、大小写变化、编码参数名、超长值和非法岗位号均须测试。不确定则删除，不以提高去重命中率为由保留凭据。
+
+### 7.2 填写留档
+
+默认事件元数据见 [产品需求 §8.8](product-requirements.md#88-填写留档默认范围)。逐字段值默认关。用户拒绝留档：填表照常，不向桌面发送采集 payload。
+
+D08 实现（可核对）：
+
+- 留档是填写结束后侧边栏里的一张卡片，**从未配对的 profile 不出现**；忽略或点「不留档」= 不存、不发。
+- `fill.submit` 载荷由 `link/fillrecords.mjs` 的 allowlist 构造：结果、计数、耗时、脱敏 URL、模板名/版本、插件版本。字段值、AI 返回值、prompt、AI 配置一律带不出去（`tests/link-privacy-d08.test.js` 用合成值逐处搜索）。
+- 「附上简历模板拷贝」默认勾选、确认前可见（负责人决定 Q3）。快照是模板内容，属 PII；疑似密码 / 验证码类字段按名剥离、值长得像凭据的字段（带标签的口令、Bearer 头、带令牌参数的 URL、已知密钥格式）按值剥离后才生成。字节只进扩展源 IndexedDB，`chrome.storage.local` 只有元数据；桌面完整 ACK 后删除本机副本。
+- 桌面块字节与回执同事务落 SQLite（v2 `snapshot_chunk_bytes`），完整快照写成 `snapshots/<id>.json` 的同一事务里清空。桌面查看快照时读前读后各核一次摘要，按同一套规则再剥一次凭据字段（桌面不信任客户端送来的字节），给界面的数据不含档案路径，并固定声明快照不证明网站收到了什么。用户放弃的快照若本机副本一时删不掉，队列里留一条「正在删除」的墓碑，下次启动删掉，绝不再发送。
+- `desktop/scripts/d08_browser_check.py` 在真实浏览器 + 真实桌面跑完后，对整个桌面数据目录做字节级搜索，合成的密码、验证码、URL 令牌一个都不能出现。
+
+---
+
+### 7.3 回复证据导入（D09）
+
+用户主动交进来的邮件、截图、PDF 与粘贴文本，全程在本机：
+
+- **不联网。** 导入、解析、预览没有任何网络调用；WebView 的 CSP（`default-src 'self'; img-src 'self' data:`）本身就挡掉远程脚本、远程图片与跟踪像素。HTML 邮件在 Rust 侧被压平成纯文本，远程地址连引用都不会留下，`javascript:` 链接只作为文本出现。
+- **原件留在档案目录。** `attachments/<yyyy>/<mm>/`，安全文件名、冲突加后缀不覆盖、同字节只存一份（`refCount`）。导入后用户把原文件移走或删掉都不影响查看。
+- **来源路径不留痕。** `sourcePathHint` 只活在一次导入的参数里；错误提示只有安全文件名与错误码。给界面的结构里没有任何档案路径。
+- **导入不是判断。** 导入只写 `evidence_imported` / `evidence_associated` / `association_changed` / `evidence_classified`，从不改申请阶段；`replyClass` 与 `sendMode` 由用户分别确认，界面不因为类型是面试邀请就把发送方式写成人工。
+- **可核对**：`desktop/crates/evidence-import/tests/hostile.rs` 集中放敌意输入（路径形状、伪装 MIME、可执行文件、损坏邮件、脚本与跟踪像素、病态标签），断言字节只会落在 `attachments/` 之内、正文里没有任何可执行片段或远程地址。
+
+## 8. AI 外发
+
+两条互不相通的 Key：
+
+| | 插件填写/解析 | 桌面通知整理（D11） |
+| --- | --- | --- |
+| 配置位置 | `chrome.storage.local.aiConfig`（今天明文） | Windows：Credential Manager / DPAPI；macOS：Keychain |
+| 发往 | 用户填的 `apiUrl`；点「获取模型」时另向同一服务的 `/models` 发一次只带 Key 的 GET。`apiUrl` 为非本机 `http://` 时设置页提示明文风险（局域网地址温和提示，公网地址明确警告），不阻止使用，以免已有配置在更新后失效 | 用户另配的桌面接口 |
+| 内容 | 表单字段描述 + 相关简历分组（现有逻辑） | 证据正文/片段 + **最少**候选申请元数据 |
+| 确认 | 用户主动点「一键 AI 填写」即同意该次填写外发 | 发送前预览范围、服务商、模型 |
+
+共同规则：
+
+- 不把完整档案库送给模型。
+- 不把另一条申请的快照当作上下文，除非用户在消歧中选中。
+- 模型返回只是建议 JSON；正文里的「忽略以上指令」不得变成工具权限（D11）。
+- 网络慢可取消；不自动重复计费重试。
+- 失败不影响本地证据与手动阶段。
+
+插件 Key **永不**因「桌面也要用 AI」而被复制。用户若在桌面再配一次，那是第二条凭据。
+
+### 8.1 桌面这一次分析，实际发出去的是什么
+
+一次 `analyze_evidence_cmd` 的请求体里，**与用户数据有关的只有这些**（另外还有模型名、系统提示词和 JSON 格式要求这些包装字段）。拼装在 `ai-extract::build_request`；「发出去的东西里没有本机 id」由 `ai_commands_tests.rs` 的 `the_request_carries_labels_and_no_local_ids` 盯着，「预览和真会发出去的那份逐字段一致」由同一文件的 `the_preview_matches_the_request_field_by_field` 盯着：
+
+| 字段 | 内容 | 不含 |
+| --- | --- | --- |
+| 邮件主题 | 这一封的主题原文 | —— |
+| 发件人 | 这一封的发件人地址 | —— |
+| 正文 | 最多 6000 字，超出截断并在预览里标明 | 附件字节、截图、PDF |
+| 候选申请 | 每条只有公司名、岗位名、当前阶段，最多 8 条（用户手选也是这个上限，界面提前拦） | **申请档案里的 UUID、证据 UUID、投递链接、快照、备注、联系人字段** |
+| 候选编号 | `c1` / `c2`…，模型只能用编号回答 | 任何本机 id |
+
+右边一列说的是**申请档案里的结构化字段**：这些字段本身不会被送出去。正文是原样发的，所以邮件正文里自然出现的网址、邮箱签名、电话号码会跟着正文一起走——发送前的预览会把正文开头摆出来，就是让用户先看清楚这一点。
+
+Key 只在 `Authorization` 头里，不进正文、不进预览、不进日志、不进备份（`ai-settings.json` 也不含 Key，见 §1 的排除表）。
+
+发送前预览（`preview_analysis_cmd`）是本机计算的，**不发请求**：它显示主机名、模型名、正文字数、是否截断、带上哪几条候选，以及正文开头一段。候选可以当场改，改完会重新算一次预览。
+
+### 8.2 哪些证据能整理
+
+| 证据类型 | 能不能 | 说明 |
+| --- | --- | --- |
+| `.eml` 邮件 | 能 | 导入时已经抽好正文 |
+| 粘贴文本 | 能 | 同上 |
+| 纯文本文件 | 能 | 分析时补读原件，按 `MAX_BODY_EXTRACT` 截断 |
+| PDF | 不能 | `AI_UNSUPPORTED_KIND`。界面让用户把正文复制出来用「粘贴文本」再导入一次 |
+| 截图 | 不能 | 同上。首发不做 OCR，也不把图片发出去 |
+
+### 8.3 失败与取消
+
+- 超时（60 秒）、取消、HTTP 错、返回不是 JSON——**一律不写库**，证据和手动分类不受影响。
+- 不自动重试：重试等于重复计费。要再试是用户自己点。
+- 取消只是不再等这个请求；界面明说**不保证对方停止计算或停止计费**。
+- 同一条证据同时只允许一个请求，第二个得到 `AI_BUSY`，不排队。
+- 任何失败之后，这条证据的手动分类都照常可用——界面每一条错误文案都会带上这句。
+- 一条证据只认一次确认（产品需求 §5.3 第 6 条）。确认过之后面板会禁用确认按钮并说明该去哪儿改，重新分析只会多一条看得见但确认不了的建议。
+- 接口地址里不许夹带凭据：带 userinfo（`https://user:pass@host/…`）或查询串里像有 key 的地址**保存不进去**（`ai_settings::credential_in_url`）。否则 Key 会落进 `ai-settings.json`、随每次请求出现在 URL 里，和「Key 只在 Authorization 头里」的口径直接冲突。
+
+---
+
+## 9. 日志与诊断
+
+格式：`timestamp utc | errorCode | component | redactedContext`。
+
+允许：stage code、UUID、字节数、耗时、HTTP 状态码（桌面出站）、NM 拒绝原因（`origin_forbidden`、`oversize`、`unknown_type`）。
+
+禁止：简历字段值、邮件正文、主题可考虑截断哈希而非原文、Key、Cookie、完整 URL（只用剥过的 host+path 或 hash）。
+
+用户导出诊断：日志 + 版本 + 档案元数据 + 队列长度。默认不含附件。导出同样警告可能残留 PII（公司名等若曾入上下文）。
+
+现有插件诊断 [`formatFillDiagnostics`](../../content.js) 已用错误类别 allowlist；桌面应对齐该纪律。
+
+---
+
+## 10. 升级、卸载、多浏览器
+
+- 升级覆盖 INSTDIR，不碰 `archive\`；迁移前自动备份 DB（D03/D12）。
+- 卸载默认留档案；注册表 NM 项指向已删除 EXE 时必须清掉，避免「host not found」残留（D13）。
+- D13 **始终**写 Chrome **和** Edge 的 HKCU `NativeMessagingHosts` 键（见 ADR §2）。不得只写 Chrome 键再指望 Edge fallback。配对在桌面 UI 粘贴 ID，分别写入对应 manifest。
+- 无云同步：换电脑 = 备份恢复。恢复后握手成功并返回新 `restoreEpoch`；插件暂停盖着旧 epoch 的绑定队列，不得静默写入。
+- macOS 卸载 `.app` 默认不动 `~/Library/Application Support/ResumePro/`。
+
+---
+
+## 11. 威胁模型（简表）
+
+| 威胁 | 严重度 | 缓解 |
+| --- | --- | --- |
+| 恶意扩展进入 allowed_origins | 高 | 无通配；生产不写任意 ID；host 扫描 argv 中的 origin token（不是 argv[0]） |
+| 本机其他用户读 named pipe | 高 | DACL 仅当前 SID |
+| 备份文件被上传到网盘 | 中 | 明文警告；不宣传加密 |
+| 日志泄漏简历 | 中 | allowlist；诊断默认无附件 |
+| 路径穿越写入 archive 外 | 高 | 相对路径规范化；拒绝 `..` |
+| HTML 邮件 XSS / 跟踪像素 | 中 | 清洗、不执行脚本、不加载远程图（D09） |
+| 模型提示注入 | 中 | 无工具权限；确认后才写库 |
+| 卸载误删档案 | 高 | 默认保留；单独确认 |
+
+---
+
+## 12. Observability 与合规口径
+
+- 不做云遥测。
+- 当前插件仓库以 MIT 发布（[`LICENSE`](../../LICENSE)）。测试夹具必须合成或脱敏。后续桌面模块的产品许可 **尚未定案**，本文不把 MIT 写成未来所有模块的承诺。
+- 不宣称 GDPR 认证；产品是单机工具。若未来加云，另开 Epic。
+
+---
+
+## 13. Open Questions
+
+备份是否加密、填写留档是否默认含字段值：见 [downstream-decisions.md](downstream-decisions.md#4-需要项目负责人选择)。本文按 **不加密、默认仅元数据** 撰写。
+
+---
+
+## 14. References
+
+- KNOWNFOLDERID `FOLDERID_LocalAppData`: https://learn.microsoft.com/en-us/windows/win32/shell/knownfolderid
+- SQLite 单文件格式: https://www.sqlite.org/onefile.html
+- Chrome NM `allowed_origins` 无通配符: https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
+- Credential Manager / DPAPI：D11 对照 Windows `CredWrite` / `CryptProtectData`（本 D01 不实现）
+- macOS Keychain：D11 对照 Keychain Services；本 D01 不实现
+- 扩展 IndexedDB：https://developer.chrome.com/docs/extensions/develop/concepts/storage-and-cookies
+- Epic #15 规则 5–8；D08 #22、D09 #21、D12 #28、D13 #29
+- [`content.js`](../../content.js) `STORAGE_KEYS`、`formatFillDiagnostics`；[`popup.js`](../../popup.js) `aiConfig`
